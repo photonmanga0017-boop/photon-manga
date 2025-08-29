@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+/* Design tokens พื้นฐาน */
+:root {
+  --background: #0a0a0a;   /* โหมดปกติของเว็บคุณเป็น dark */
+  --foreground: #ededed;
+}
+
+/* โหมดสว่าง (ถ้าต้องการ) */
+@media (prefers-color-scheme: light) {
+  :root {
+    --background: #ffffff;
+    --foreground: #171717;
+  }
+}
+
+/* ผูก tokens เข้ากับ Tailwind v4 theme */
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  /* ถ้ามีฟอนต์แบบ variable ให้ประกาศที่นี่ */
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* Base styles */
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), system-ui, -apple-system, Segoe UI, Roboto, Arial, "Noto Sans Thai", sans-serif;
+}
+
+/* ตัวอย่าง utility เสริม (ถ้าต้องการ) */
+/* @utility card {
+  @apply rounded-xl border border-neutral-800 bg-neutral-900/60 backdrop-blur;
+} */
