@@ -1,6 +1,9 @@
 // app/read/[id]/page.tsx
 import { notFound } from "next/navigation";
 import { createClient } from "@/lib/supabaseClient";
+import ReaderBarBehavior from "../_ReaderBarBehavior";
+import ChapterSelect, { ChapterOption } from "../_ChapterSelect";
+import WriteRecentOnMount from "@/components/WriteRecentOnMount";
 
 type ChapterRow = {
   id: number;
@@ -11,86 +14,160 @@ type ChapterRow = {
   pages: { id: number; page_number: number | null; image_url: string | null }[];
 };
 
-export default async function ReadPage({
-  params,
-}: {
-  params: { id: string };
-}) {
-  const idParam = Number(params.id);
-  if (!Number.isFinite(idParam)) {
-    console.error("ReadPage: invalid id param:", params.id);
-    return notFound();
-  }
+type ChapterLite = { id: number; number: number | null };
+
+export default async function ReadPage({ params }: { params: { id: string } }) {
+  const chapterId = Number(params.id);
+  if (!Number.isFinite(chapterId)) return notFound();
 
   const supabase = createClient();
 
-  // ดึงตอน + manga + pages
+  // ตอนปัจจุบัน
   const { data, error } = await supabase
     .from("chapters")
     .select(
       `
-      id,
-      number,
-      published_at,
-      manga_id,
+      id, number, published_at, manga_id,
       manga:manga ( id, title, slug ),
       pages:pages ( id, page_number, image_url )
     `
     )
-    .eq("id", idParam)
-    .maybeSingle<ChapterRow>(); // <- ไม่โยน error ถ้าไม่เจอแถว
+    .eq("id", chapterId)
+    .maybeSingle<ChapterRow>();
 
-  if (error) {
-    // ถ้ามี RLS block / ปัญหาอื่น จะเห็น error ที่นี่
-    console.error("ReadPage query error:", error);
-  }
+  if (error) console.error("ReadPage query error:", error);
+  if (!data) return notFound();
 
-  if (!data) {
-    // ไม่เจอ row -> 404
-    console.warn("ReadPage: no chapter found for id", idParam);
-    return notFound();
-  }
-
-  // เรียงหน้าตาม page_number
+  // เรียงหน้า
   const pages = (data.pages ?? [])
     .slice()
     .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
 
+  // ตอนทั้งหมดของเรื่อง (ไว้ทำดรอปดาว/ปุ่มก่อน-ถัดไป)
+  const { data: allChapters, error: listErr } = await supabase
+    .from("chapters")
+    .select("id, number")
+    .eq("manga_id", data.manga_id)
+    .order("number", { ascending: true });
+
+  if (listErr) console.error(listErr);
+  const chapters: ChapterLite[] = (allChapters ?? []) as ChapterLite[];
+
+  const curIdx = chapters.findIndex((c) => c.id === data.id);
+  const prev = curIdx > 0 ? chapters[curIdx - 1] : null;
+  const next = curIdx >= 0 && curIdx + 1 < chapters.length ? chapters[curIdx + 1] : null;
+
   return (
-    <main className="mx-auto max-w-4xl p-2 md:p-6">
+    <main className="mx-auto max-w-4xl px-2 md:px-6 pt-2 md:pt-3 lg:pt-2 pb-6">
+      {/* เขียน “อ่านล่าสุด” ทุกครั้งที่เปิดหน้าอ่าน ไม่ว่ามาจากไหน */}
+      <WriteRecentOnMount
+        mangaId={data.manga_id}
+        chapterId={data.id}
+        chapterNumber={typeof data.number === "number" ? data.number : null}
+        publishedAt={data.published_at ?? null}
+      />
+
+      {/* style สำหรับแถบควบคุมให้ซ่อน/โผล่บนมือถือ */}
+      <style
+        dangerouslySetInnerHTML={{
+          __html: `
+            .reader-bar { transition: transform .25s ease, opacity .2s ease; will-change: transform, opacity; }
+            @media (max-width: 1023.98px) {
+              .reader-bar--hidden { transform: translateY(calc(-100% - 12px)); opacity: 0; pointer-events: none; }
+            }
+          `,
+        }}
+      />
+
+      {/* แถบควบคุม (ตำแหน่ง/สไตล์เดิมทุกอย่าง) */}
+      <div
+        id="reader-bar"
+        className="
+          reader-bar sticky top-[50px] md:top-[60px] lg:top-[74px] z-40 mb-2
+          flex items-center gap-2 flex-nowrap
+          rounded-xl border border-neutral-800 bg-neutral-900/70 py-1.5 px-2 backdrop-blur
+        "
+      >
+        {/* ไปหน้ารายละเอียดเรื่อง */}
+        <a
+          href={data.manga?.slug ? `/manga/${data.manga.slug}` : "/"}
+          className="
+            inline-flex min-w-0 flex-1 items-center gap-2
+            rounded-lg border border-neutral-800 bg-neutral-900
+            px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 leading-none
+          "
+          title={data.manga?.title ?? undefined}
+        >
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 19V5a2 2 0 0 1 2-2h10l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Zm2 0h12V8h-4V4H6v15Z" />
+          </svg>
+          <span className="truncate">{data.manga?.title ?? "Series"}</span>
+        </a>
+
+        {/* ดรอปดาวเลือกตอน (Client Component) — ส่ง mangaId เพิ่มเพื่อบันทึก recent */}
+        <ChapterSelect
+          options={chapters as unknown as ChapterOption[]}
+          currentId={data.id}
+          mangaId={data.manga_id}
+        />
+
+        {/* ปุ่มก่อนหน้า / ถัดไป (UI เดิม) */}
+        <div className="shrink-0 flex items-center gap-1">
+          <a
+            href={prev ? `/read/${prev.id}` : undefined}
+            aria-disabled={!prev}
+            className={`inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-100 leading-none transition ${
+              prev ? "hover:bg-neutral-800" : "opacity-40 pointer-events-none"
+            }`}
+            title="ตอนก่อนหน้า"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.5 19 8.5 12l7-7 1.5 1.5L11.5 12l5.5 5.5L15.5 19Z" />
+            </svg>
+          </a>
+          <a
+            href={next ? `/read/${next.id}` : undefined}
+            aria-disabled={!next}
+            className={`inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-100 leading-none transition ${
+              next ? "hover:bg-neutral-800" : "opacity-40 pointer-events-none"
+            }`}
+            title="ตอนถัดไป"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="m8.5 19 7-7-7-7L7 6.5l5.5 5.5L7 17.5 8.5 19Z" />
+            </svg>
+          </a>
+        </div>
+      </div>
+
       {/* หัวเรื่อง */}
       <div className="mb-4 md:mb-6">
-        <h1 className="text-lg font-bold md:text-2xl">
+        <h1 className="text-lg font-bold md:2xl">
           {data.manga?.title ?? "ไม่ทราบชื่อเรื่อง"} — ตอน {data.number ?? "-"}
         </h1>
         {data.published_at && (
-          <p className="mt-1 text-xs opacity-70">
-            เผยแพร่: {new Date(data.published_at).toLocaleString()}
-          </p>
+          <time
+            suppressHydrationWarning
+            dateTime={data.published_at ?? undefined}
+            className="mt-1 block text-xs opacity-70"
+          >
+            {new Date(data.published_at).toLocaleString()}
+          </time>
         )}
       </div>
 
-      {/* ภาพ */}
+      {/* เนื้อหาภาพ */}
       {pages.length ? (
         <div className="flex flex-col gap-2 md:gap-3">
           {pages.map((p) => (
-            <div
-              key={p.id}
-              className="overflow-hidden rounded md:rounded-lg bg-neutral-900"
-            >
-              {p.image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={p.image_url}
-                  alt={`page ${p.page_number ?? ""}`}
-                  className="w-full h-auto object-contain"
-                  loading="lazy"
-                />
-              ) : (
-                <div className="p-6 text-center text-sm opacity-60">
-                  ไม่มีรูปภาพ
-                </div>
-              )}
+            <div key={p.id} className="overflow-hidden rounded bg-neutral-900 md:rounded-lg">
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                src={p.image_url ?? ""}
+                alt={`page ${p.page_number ?? ""}`}
+                className="h-auto w-full select-none object-contain"
+                loading="lazy"
+              />
             </div>
           ))}
         </div>
@@ -99,6 +176,9 @@ export default async function ReadPage({
           ไม่พบบทภาพสำหรับตอนนี้
         </div>
       )}
+
+      {/* ให้ behavior ซ่อน/แสดงบนมือถือทำงาน (คงของเดิม) */}
+      <ReaderBarBehavior />
     </main>
   );
 }

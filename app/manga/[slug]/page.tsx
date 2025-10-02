@@ -1,174 +1,137 @@
 // app/manga/[slug]/page.tsx
-import Link from "next/link";
 import { createClient } from "@/lib/supabaseClient";
+import Image from "next/image";
+import Link from "next/link";
+import ReadHighlight from "@/components/ReadHighlight";
+import BookmarkButton from "@/components/BookmarkButton";
+import { timeAgo } from "@/lib/time";
 
-/** ---------- Types ---------- */
-type Manga = {
+type ChapterRow = { id: number; number: number | null; published_at: string | null };
+type MangaRow = {
   id: number;
-  title: string;
-  slug: string;
+  title: string | null;
   cover_url: string | null;
-  description?: string | null;
-  status: string;
-  type?: string | null;
-  genres?: string[] | string | null; // รองรับทั้ง text[] หรือ text
+  status: string | null;
+  genres: string[] | null;
+  chapters: ChapterRow[];
 };
 
-type Chapter = {
-  id: number;
-  manga_id: number;
-  number: number;
-  is_vip: boolean;
-  published_at: string | null;
-};
-
-/** ---------- Utils ---------- */
-function isNewWithin24h(dateStr: string | null): boolean {
-  if (!dateStr) return false;
-  const d = new Date(dateStr).getTime();
-  if (Number.isNaN(d)) return false;
-  return Date.now() - d <= 24 * 60 * 60 * 1000;
-}
-
-function timeAgo(dateStr: string | null): string {
-  if (!dateStr) return "-";
-  const d = new Date(dateStr).getTime();
-  if (Number.isNaN(d)) return "-";
-  const sec = Math.floor((Date.now() - d) / 1000);
-  if (sec < 60) return `${sec}s ago`;
-  const min = Math.floor(sec / 60);
-  if (min < 60) return `${min}m ago`;
-  const hr = Math.floor(min / 60);
-  if (hr < 24) return `${hr}h ago`;
-  const day = Math.floor(hr / 24);
-  return `${day}d ago`;
-}
-
-export default async function MangaDetail({
-  params,
-}: {
-  params: { slug: string };
-}) {
+export default async function MangaPage({ params }: { params: { slug: string } }) {
   const supabase = createClient();
 
-  /** 1) ดึงข้อมูลมังงะตาม slug */
-  const { data: manga, error: mangaErr } = await supabase
+  const { data, error } = await supabase
     .from("manga")
     .select(
       `
-      id,
-      title,
-      slug,
-      cover_url,
-      description,
-      status,
-      type,
-      genres
-      `
+      id, title, cover_url, status, genres,
+      chapters:chapters ( id, number, published_at )
+    `
     )
     .eq("slug", params.slug)
-    .single<Manga>();
+    .maybeSingle<MangaRow>();
 
-  if (mangaErr || !manga) {
-    // กรณีไม่พบหรือ error
+  if (error || !data) {
     return (
-      <main className="p-6">
-        <h1 className="text-xl font-semibold">ไม่พบเนื้อหา</h1>
-        {mangaErr ? (
-          <p className="opacity-70 mt-2 text-sm">{mangaErr.message}</p>
-        ) : null}
+      <main className="mx-auto max-w-5xl p-4">
+        <p className="opacity-70">ไม่พบข้อมูล</p>
       </main>
     );
   }
 
-  /** 2) ดึง chapters ของมังงะเรื่องนี้ (เรียงล่าสุดก่อน) */
-  const { data: chapters, error: chErr } = await supabase
-    .from("chapters")
-    .select("id, manga_id, number, is_vip, published_at")
-    .eq("manga_id", manga.id)
-    .order("number", { ascending: false });
+  // เรียงตอนล่าสุดอยู่บนสุด
+  const chapters = (data.chapters ?? [])
+    .slice()
+    .sort((a, b) => {
+      const na = typeof a.number === "number" ? a.number : -Infinity;
+      const nb = typeof b.number === "number" ? b.number : -Infinity;
+      if (na !== nb) return nb - na;
+      const ta = a.published_at ? new Date(a.published_at).getTime() : 0;
+      const tb = b.published_at ? new Date(b.published_at).getTime() : 0;
+      return tb - ta;
+    });
 
-  const chapterList: Chapter[] = (chapters ?? []) as Chapter[];
-
-  // genres อาจเป็น string[] หรือ string หรือ null -> แปลงเป็น array เพื่อแสดงผล
-  const genresArr =
-    Array.isArray(manga.genres)
-      ? manga.genres
-      : typeof manga.genres === "string" && manga.genres.length > 0
-      ? [manga.genres]
-      : [];
+  // ตอนแรก (ไว้ให้ปุ่ม “เริ่มอ่านตอนแรก”)
+  const firstChapter = [...(data.chapters ?? [])]
+    .slice()
+    .sort((a, b) => (a.number ?? 0) - (b.number ?? 0))[0];
 
   return (
     <main className="mx-auto max-w-5xl p-4 md:p-6">
-      {/* Header: ปก + ข้อมูลเรื่อง */}
-      <div className="flex gap-4">
-        <div className="w-36 h-48 overflow-hidden rounded-md bg-neutral-800">
-          {manga.cover_url ? (
-            // ใช้ img ปกติ เพื่อลดปัญหา next/image ระหว่าง dev
-            <img
-              src={manga.cover_url}
-              alt={manga.title}
-              className="w-full h-full object-cover"
-              loading="lazy"
-            />
-          ) : (
-            <div className="flex h-full items-center justify-center text-sm opacity-60">
-              ไม่มีปก
-            </div>
-          )}
-        </div>
-
-        <div className="min-w-0">
-          <h1 className="text-2xl font-bold">{manga.title}</h1>
-          <div className="text-sm text-zinc-400 mt-1">
-            {manga.type ? <span className="mr-2">{manga.type}</span> : null}
-            <span>{manga.status}</span>
+      <div className="flex items-start gap-4 md:gap-6">
+        {/* ฝั่งซ้าย = รูป + ปุ่มบุ๊คมาร์ค */}
+        <div className="flex flex-col items-center">
+          <div className="relative h-40 w-28 overflow-hidden rounded bg-neutral-800 md:h-56 md:w-40">
+            {data.cover_url ? (
+              <Image
+                src={data.cover_url}
+                alt={data.title ?? ""}
+                fill
+                className="object-cover"
+                sizes="(max-width:768px) 112px, 160px"
+              />
+            ) : null}
           </div>
 
-          {manga.description ? (
-            <p className="mt-2 leading-6 whitespace-pre-wrap">
-              {manga.description}
-            </p>
-          ) : null}
+          {/* ปุ่มบุ๊คมาร์ค: อยู่ใต้รูป, กว้างเท่ารูป */}
+          <div className="mt-3 w-full">
+            <BookmarkButton mangaId={data.id} className="w-full justify-center" />
+          </div>
+        </div>
 
-          {genresArr.length > 0 ? (
-            <div className="mt-2 text-xs text-zinc-400">
-              แนว: {genresArr.join(", ")}
-            </div>
-          ) : null}
+        {/* ฝั่งขวา = ชื่อเรื่อง */}
+        <div className="min-w-0 flex-1">
+          <h1 className="text-xl font-bold md:text-2xl lg:text-4xl leading-tight">
+            {data.title}
+          </h1>
+
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-sm text-neutral-400">
+            {data.status && (
+              <span className="rounded bg-neutral-800 px-2 py-0.5">{data.status}</span>
+            )}
+            {Array.isArray(data.genres) &&
+              data.genres.map((g) => (
+                <span key={g} className="rounded bg-neutral-800 px-2 py-0.5">
+                  {g}
+                </span>
+              ))}
+          </div>
         </div>
       </div>
 
-      {/* Chapter list */}
-      <section className="mt-6">
-        <h2 className="text-lg font-semibold mb-3">ตอนทั้งหมด</h2>
+      {/* ปุ่มเริ่มอ่านตอนแรก - ย้ายลงมาอยู่กลาง */}
+      {firstChapter && (
+        <div className="mt-6 flex justify-center">
+          <Link
+            href={`/read/${firstChapter.id}`}
+            className="rounded-lg bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-sm font-semibold text-white transition"
+          >
+            เริ่มอ่านตอนแรก
+          </Link>
+        </div>
+      )}
 
-        {chErr ? (
-          <p className="text-sm opacity-70">เกิดข้อผิดพลาด: {chErr.message}</p>
-        ) : chapterList.length === 0 ? (
-          <p className="text-sm opacity-70">ยังไม่มีตอน</p>
-        ) : (
-          <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2">
-            {chapterList.map((ch: Chapter) => {
-              const isNew = isNewWithin24h(ch.published_at);
-              return (
-                <Link
-                  key={ch.id}
-                  href={`/read/${ch.id}`}
-                  className="rounded bg-neutral-900 px-3 py-2 text-sm hover:bg-neutral-800 transition"
-                >
-                  <div className="flex items-center justify-between">
-                    <span>ตอน {ch.number}</span>
-                    <span className="text-xs opacity-70">
-                      {isNew ? "New!" : timeAgo(ch.published_at)}
-                    </span>
-                  </div>
-                </Link>
-              );
-            })}
-          </div>
-        )}
-      </section>
+      <h2 className="mt-8 mb-3 text-lg font-semibold">ตอนทั้งหมด</h2>
+
+      {/* มือถือ: 1 คอลัมน์ / แท็บเล็ต: 4 / เดสก์ท็อป: 4 */}
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-4">
+        {chapters.map((ch) => {
+          const n = ch.number ?? undefined;
+          return (
+            <Link
+              key={ch.id}
+              href={`/read/${ch.id}`}
+              className="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 hover:bg-neutral-800 transition text-sm"
+            >
+              <ReadHighlight chapterId={ch.id} readClassName="text-orange-400">
+                ตอนที่ {n}
+              </ReadHighlight>
+              <span className="text-xs text-neutral-400 whitespace-nowrap ml-2">
+                {timeAgo(ch.published_at)}
+              </span>
+            </Link>
+          );
+        })}
+      </div>
     </main>
   );
 }

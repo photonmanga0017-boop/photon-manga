@@ -1,7 +1,7 @@
-// components/MangaCard.tsx
 import Link from "next/link";
 import Image from "next/image";
 import { timeAgo, isNewWithin24h } from "@/lib/time";
+import ReadHighlight from "./ReadHighlight";
 
 type ChapterLite = {
   id: number;
@@ -28,7 +28,6 @@ export default function MangaCard({
   genres = [],
   chapters,
 }: MangaCardProps) {
-  // เรียงตอนจากใหม่ -> เก่า แล้วเอาแค่ 3 ตอนบนสุด
   const top3 = [...chapters]
     .sort((a, b) => {
       const ta = a.published_at ? new Date(a.published_at).getTime() : 0;
@@ -66,7 +65,6 @@ export default function MangaCard({
         )}
       </div>
 
-      {/* ดันรายการตอนลงล่างเสมอ */}
       <ul className="mt-auto space-y-1 pt-3">
         {top3.map((ch) => {
           const isNew = isNewWithin24h(ch.published_at);
@@ -75,7 +73,10 @@ export default function MangaCard({
               key={ch.id}
               className="flex items-center justify-between rounded-md bg-neutral-800 px-2 py-1 text-xs"
             >
-              <span>ตอน {ch.number}</span>
+              {/* ไฮไลต์ “ตอน X” เป็นสีแดงถ้าอ่านแล้ว */}
+              <ReadHighlight chapterId={ch.id}>
+                ตอน {ch.number}
+              </ReadHighlight>
 
               {isNew ? (
                 <span className="ml-2 rounded bg-red-500 px-2 py-[2px] font-semibold text-white">

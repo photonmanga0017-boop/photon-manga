@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { createClient } from "@/lib/supabaseClient";
 
 type Row = {
@@ -33,23 +34,21 @@ export default function SearchBox({ className = "" }: { className?: string }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [active, setActive] = useState(0);
 
-  const rootRef = useRef<HTMLDivElement>(null);
+  // สำหรับเดสก์ท็อป/แท็บเล็ต (วางใต้ช่อง)
+  const anchorRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
+  const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
-      if (!rootRef.current) return;
-      if (!rootRef.current.contains(e.target as Node)) setOpen(false);
-    };
-    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
-    document.addEventListener("mousedown", onClick);
-    document.addEventListener("keydown", onEsc);
-    return () => {
-      document.removeEventListener("mousedown", onClick);
-      document.removeEventListener("keydown", onEsc);
-    };
+    if (typeof window === "undefined") return;
+    const mq = window.matchMedia("(max-width: 767.98px)");
+    const handle = () => setIsMobile(mq.matches);
+    handle();
+    mq.addEventListener("change", handle);
+    return () => mq.removeEventListener("change", handle);
   }, []);
 
+  // ดึงผลลัพธ์
   useEffect(() => {
     if (!debounced.trim()) {
       setRows([]);
@@ -69,24 +68,40 @@ export default function SearchBox({ className = "" }: { className?: string }) {
         )
         .ilike("title", `%${debounced}%`)
         .order("updated_at", { ascending: false })
-        .limit(10);
+        .limit(20);
 
-      if (!cancelled) {
-        setLoading(false);
-        if (error) {
-          console.error(error);
-          setRows([]);
-        } else {
-          setRows((data ?? []) as unknown as Row[]);
-          setActive(0);
-          setOpen(true);
-        }
+      if (cancelled) return;
+      setLoading(false);
+      if (error) {
+        console.error(error);
+        setRows([]);
+      } else {
+        setRows((data ?? []) as unknown as Row[]);
+        setActive(0);
+        setOpen(true);
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [debounced, supabase]);
+
+  // ปิดด้วย ESC
+  useEffect(() => {
+    const onEsc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("keydown", onEsc);
+    return () => document.removeEventListener("keydown", onEsc);
+  }, []);
+
+  // ล็อกสกรอลเมื่อเปิด
+  useEffect(() => {
+    if (!open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [open]);
 
   function onKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
     if (!open || !rows.length) return;
@@ -102,18 +117,176 @@ export default function SearchBox({ className = "" }: { className?: string }) {
     }
   }
 
+  // พิกัดแผงสำหรับแท็บเล็ต/เดสก์ท็อป (มือถือจะไม่ใช้ค่านี้)
+  const desktopStyle = (() => {
+    const rect = anchorRef.current?.getBoundingClientRect();
+    if (!rect) return undefined;
+    return {
+      position: "fixed" as const,
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+      maxHeight: "70vh",
+    };
+  })();
+
+  function Overlay() {
+    if (!open) return null;
+    return createPortal(
+      <>
+        {/* Backdrop: โชว์ทุกเบรกพอยต์ เพื่อให้กดปิดได้ง่าย */}
+        <div
+          className="fixed inset-0 z-[998] bg-black/40"
+          onClick={() => setOpen(false)}
+          aria-hidden
+        />
+
+        {/* Panel:
+            - มือถือ: เต็มความกว้างจากขอบบน (เว้นเฮดเดอร์ ~44-56px)
+            - แท็บเล็ต/เดสก์ท็อป: วางใต้ช่องค้นหา (อิง rect) */}
+        {isMobile ? (
+          <div
+            className="
+              fixed z-[999] inset-x-2 top-[56px]
+              overflow-hidden rounded-xl border border-neutral-800
+              bg-neutral-950/95 backdrop-blur shadow-2xl
+            "
+            style={{ maxHeight: "70vh" }}
+          >
+            {loading ? (
+              <div className="p-4 text-sm text-neutral-400">กำลังค้นหา…</div>
+            ) : query.trim() === "" ? (
+              <div className="p-4 text-sm text-neutral-500">พิมพ์คำเพื่อค้นหา…</div>
+            ) : rows.length === 0 ? (
+              <div className="p-4 text-sm text-neutral-400">ไม่พบผลลัพธ์</div>
+            ) : (
+              <ul className="max-h-[70vh] overflow-auto p-1">
+                {rows.map((r, i) => {
+                  const chapters = r.chapters?.[0]?.count ? r.chapters[0].count : 0;
+                  const genresText = r.genres?.join(", ");
+                  const isActive = i === active;
+                  return (
+                    <li key={r.id}>
+                      <Link
+                        href={`/manga/${r.slug}`}
+                        className={`flex items-start gap-3 rounded-lg p-2 transition-colors ${
+                          isActive ? "bg-neutral-800/60" : "hover:bg-neutral-900"
+                        }`}
+                        onMouseEnter={() => setActive(i)}
+                        onClick={() => setOpen(false)}
+                      >
+                        <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md bg-neutral-800">
+                          {r.cover_url ? (
+                            <img
+                              src={r.cover_url}
+                              alt={r.title}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[14px] font-medium text-white">
+                            {r.title}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-[12px] text-neutral-400">
+                            {r.status && <span>{r.status}</span>}
+                            <span>•</span>
+                            <span>Ch. {chapters}</span>
+                          </div>
+                          {genresText ? (
+                            <div className="mt-0.5 line-clamp-1 text-[12px] text-neutral-500">
+                              {genresText}
+                            </div>
+                          ) : null}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        ) : (
+          <div
+            className="
+              z-[999] overflow-hidden rounded-xl border border-neutral-800
+              bg-neutral-950/95 backdrop-blur shadow-2xl
+            "
+            style={desktopStyle}
+          >
+            {loading ? (
+              <div className="p-4 text-sm text-neutral-400">กำลังค้นหา…</div>
+            ) : query.trim() === "" ? (
+              <div className="p-4 text-sm text-neutral-500">พิมพ์คำเพื่อค้นหา…</div>
+            ) : rows.length === 0 ? (
+              <div className="p-4 text-sm text-neutral-400">ไม่พบผลลัพธ์</div>
+            ) : (
+              <ul className="max-h-[70vh] overflow-auto p-1">
+                {rows.map((r, i) => {
+                  const chapters = r.chapters?.[0]?.count ? r.chapters[0].count : 0;
+                  const genresText = r.genres?.join(", ");
+                  const isActive = i === active;
+                  return (
+                    <li key={r.id}>
+                      <Link
+                        href={`/manga/${r.slug}`}
+                        className={`flex items-start gap-3 rounded-lg p-2 transition-colors ${
+                          isActive ? "bg-neutral-800/60" : "hover:bg-neutral-900"
+                        }`}
+                        onMouseEnter={() => setActive(i)}
+                        onClick={() => setOpen(false)}
+                      >
+                        <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md bg-neutral-800">
+                          {r.cover_url ? (
+                            <img
+                              src={r.cover_url}
+                              alt={r.title}
+                              className="h-full w-full object-cover"
+                              loading="lazy"
+                            />
+                          ) : null}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-[14px] font-medium text-white">
+                            {r.title}
+                          </div>
+                          <div className="mt-0.5 flex items-center gap-2 text-[12px] text-neutral-400">
+                            {r.status && <span>{r.status}</span>}
+                            <span>•</span>
+                            <span>Ch. {chapters}</span>
+                          </div>
+                          {genresText ? (
+                            <div className="mt-0.5 line-clamp-1 text-[12px] text-neutral-500">
+                              {genresText}
+                            </div>
+                          ) : null}
+                        </div>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        )}
+      </>,
+      document.body
+    );
+  }
+
   return (
-    <div ref={rootRef} className={`relative ${className}`}>
-      {/* INPUT: สูงเท่าปุ่ม VIP, ไม่มี placeholder, ไอคอนไปทางขวา */}
+    <div ref={anchorRef} className={`relative ${className}`}>
+      {/* กล่อง input */}
       <div className="relative">
         <input
           ref={inputRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => rows.length && setOpen(true)}
+          onFocus={() => setOpen(true)}   // เปิดทันที
           onKeyDown={onKeyDown}
-          placeholder="" // <- ไม่มีข้อความ
-          aria-label="ค้นหามังงะ"
+          placeholder=""
+          aria-label="ค้นหา"
           className="
             h-8 w-full rounded-full
             border border-neutral-800 bg-neutral-900/70
@@ -122,7 +295,6 @@ export default function SearchBox({ className = "" }: { className?: string }) {
             focus:border-neutral-700 focus:ring-4 focus:ring-white/5
           "
         />
-        {/* icon ด้านขวา (กดแล้วโฟกัสช่อง) */}
         <button
           type="button"
           onClick={() => inputRef.current?.focus()}
@@ -138,66 +310,8 @@ export default function SearchBox({ className = "" }: { className?: string }) {
         </button>
       </div>
 
-      {/* DROPDOWN */}
-      {open && (
-        <div className="absolute left-0 right-0 z-50 mt-2 overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950 shadow-2xl">
-          {loading ? (
-            <div className="p-4 text-sm text-neutral-400">กำลังค้นหา…</div>
-          ) : rows.length ? (
-            <ul className="max-h-[70vh] overflow-auto p-1">
-              {rows.map((r, i) => {
-                const chapters = r.chapters?.[0]?.count ? r.chapters[0].count : 0;
-                const genresText = r.genres?.join(", ");
-                const isActive = i === active;
-
-                return (
-                  <li key={r.id}>
-                    <Link
-                      href={`/manga/${r.slug}`}
-                      className={`flex items-start gap-3 rounded-lg p-2 transition-colors ${
-                        isActive ? "bg-neutral-800/60" : "hover:bg-neutral-900"
-                      }`}
-                      onMouseEnter={() => setActive(i)}
-                      onClick={() => setOpen(false)}
-                    >
-                      {/* ซ้าย: รูป */}
-                      <div className="h-14 w-11 shrink-0 overflow-hidden rounded-md bg-neutral-800">
-                        {r.cover_url ? (
-                          <img
-                            src={r.cover_url}
-                            alt={r.title}
-                            className="h-full w-full object-cover"
-                            loading="lazy"
-                          />
-                        ) : null}
-                      </div>
-
-                      {/* ขวา: ข้อความ */}
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[14px] font-medium text-white">
-                          {r.title}
-                        </div>
-                        <div className="mt-0.5 flex items-center gap-2 text-[12px] text-neutral-400">
-                          {r.status && <span>{r.status}</span>}
-                          <span>•</span>
-                          <span>Ch. {chapters}</span>
-                        </div>
-                        {genresText ? (
-                          <div className="mt-0.5 line-clamp-1 text-[12px] text-neutral-500">
-                            {genresText}
-                          </div>
-                        ) : null}
-                      </div>
-                    </Link>
-                  </li>
-                );
-              })}
-            </ul>
-          ) : (
-            <div className="p-4 text-sm text-neutral-400">ไม่พบผลลัพธ์</div>
-          )}
-        </div>
-      )}
+      {/* แผง + แบ็กดรอป */}
+      <Overlay />
     </div>
   );
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabaseClient";
 import PageSizer from "@/components/PageSizer";
 import ChapterLink from "@/components/ChapterLink";
+import ReadHighlight from "@/components/ReadHighlight"; // ★ เพิ่ม import
 
 /** ---------- Types ---------- */
 type ChapterLite = {
@@ -118,7 +119,7 @@ export default async function Home({
     <main className="mx-auto max-w-6xl p-2 md:p-6">
       <PageSizer />
 
-      <h1 className="mb-3 text-xl font-bold md:mb-4 md:text-2xl">ล่าสุดอัปเดต</h1>
+      <h1 className="mb-3 text-xl font-bold md:mb-4 md:text-2xl">อัปเดตล่าสุด</h1>
 
       {/* มือถือ: 3 คอลัมน์ (gap-2), md: 4 (gap-3), xl: 5 (gap-4) */}
       <div className="grid grid-cols-3 gap-2 md:grid-cols-4 md:gap-3 xl:grid-cols-5 xl:gap-4">
@@ -164,7 +165,11 @@ export default async function Home({
                     publishedAt={ch.published_at}
                     className="flex items-center justify-between rounded bg-neutral-800 px-2 py-0.5 text-[11px] transition hover:bg-neutral-700 md:py-1 md:text-xs"
                   >
-                    <span className="truncate">ตอน {ch.number}</span>
+                    {/* ★ ไฮไลต์ตอนที่อ่านแล้ว */}
+                    <ReadHighlight chapterId={ch.id} readClassName="text-orange-400">
+                      <span className="truncate">ตอน {ch.number}</span>
+                    </ReadHighlight>
+
                     <span
                       className={`ml-2 shrink-0 ${
                         isNew ? "font-semibold text-red-400" : "opacity-70"
