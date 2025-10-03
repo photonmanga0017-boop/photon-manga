@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabaseClient";
 import ReaderBarBehavior from "../_ReaderBarBehavior";
 import ChapterSelect, { ChapterOption } from "../_ChapterSelect";
 import WriteRecentOnMount from "@/components/WriteRecentOnMount";
+import DesktopTopHider from "../_DesktopTopHider";
 
 type ChapterRow = {
   id: number;
@@ -43,7 +44,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
     .slice()
     .sort((a, b) => (a.page_number ?? 0) - (b.page_number ?? 0));
 
-  // ตอนทั้งหมดของเรื่อง (ไว้ทำดรอปดาว/ปุ่มก่อน-ถัดไป)
+  // ตอนทั้งหมดของเรื่อง
   const { data: allChapters, error: listErr } = await supabase
     .from("chapters")
     .select("id, number")
@@ -67,11 +68,16 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         publishedAt={data.published_at ?? null}
       />
 
-      {/* style สำหรับแถบควบคุมให้ซ่อน/โผล่บนมือถือ */}
+      {/* CSS: เดสก์ท็อปซ่อน/โชว์ + มือถือ behavior เดิม */}
       <style
         dangerouslySetInnerHTML={{
           __html: `
             .reader-bar { transition: transform .25s ease, opacity .2s ease; will-change: transform, opacity; }
+            .site-desktop-bar { transition: transform .25s ease; will-change: transform; }
+            @media (min-width: 1024px) {
+              .site-desktop-bar.slide-up { transform: translateY(-100%); }
+              #reader-bar.slide-up { transform: translateY(calc(-100% - 12px)); opacity: 0; pointer-events: none; }
+            }
             @media (max-width: 1023.98px) {
               .reader-bar--hidden { transform: translateY(calc(-100% - 12px)); opacity: 0; pointer-events: none; }
             }
@@ -79,7 +85,10 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         }}
       />
 
-      {/* แถบควบคุม (ตำแหน่ง/สไตล์เดิมทุกอย่าง) */}
+      {/* ควบคุมการซ่อน/โชว์บนเดสก์ท็อป */}
+      <DesktopTopHider />
+
+      {/* แถบควบคุมด้านบน */}
       <div
         id="reader-bar"
         className="
@@ -104,14 +113,14 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
           <span className="truncate">{data.manga?.title ?? "Series"}</span>
         </a>
 
-        {/* ดรอปดาวเลือกตอน (Client Component) — ส่ง mangaId เพิ่มเพื่อบันทึก recent */}
+        {/* ดรอปดาวเลือกตอน (โหมดปกติ) */}
         <ChapterSelect
           options={chapters as unknown as ChapterOption[]}
           currentId={data.id}
           mangaId={data.manga_id}
         />
 
-        {/* ปุ่มก่อนหน้า / ถัดไป (UI เดิม) */}
+        {/* ปุ่มก่อนหน้า / ถัดไป */}
         <div className="shrink-0 flex items-center gap-1">
           <a
             href={prev ? `/read/${prev.id}` : undefined}
@@ -177,7 +186,69 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* ให้ behavior ซ่อน/แสดงบนมือถือทำงาน (คงของเดิม) */}
+      {/* แถบควบคุม "ด้านล่าง" หลังอ่านจบ */}
+      <div
+        id="reader-bottom"
+        className="
+          mt-6
+          flex items-center gap-2 flex-nowrap
+          rounded-xl border border-neutral-800 bg-neutral-900/70 py-1.5 px-2
+        "
+      >
+        {/* ไปหน้ารายละเอียดเรื่อง */}
+        <a
+          href={data.manga?.slug ? `/manga/${data.manga.slug}` : "/"}
+          className="
+            inline-flex min-w-0 flex-1 items-center gap-2
+            rounded-lg border border-neutral-800 bg-neutral-900
+            px-3 py-2 text-sm text-neutral-100 hover:bg-neutral-800 leading-none
+          "
+          title={data.manga?.title ?? undefined}
+        >
+          <svg className="h-4 w-4 shrink-0" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M4 19V5a2 2 0 0 1 2-2h10l4 4v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Zm2 0h12V8h-4V4H6v15Z" />
+          </svg>
+          <span className="truncate">{data.manga?.title ?? "Series"}</span>
+        </a>
+
+        {/* ดรอปดาวเลือกตอน (ทำให้เป็น drop-up โดยไม่เปลี่ยน UI อื่น) */}
+        <ChapterSelect
+          options={chapters as unknown as ChapterOption[]}
+          currentId={data.id}
+          mangaId={data.manga_id}
+          dropUp
+        />
+
+        {/* ปุ่มก่อนหน้า / ถัดไป */}
+        <div className="shrink-0 flex items-center gap-1">
+          <a
+            href={prev ? `/read/${prev.id}` : undefined}
+            aria-disabled={!prev}
+            className={`inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-100 leading-none transition ${
+              prev ? "hover:bg-neutral-800" : "opacity-40 pointer-events-none"
+            }`}
+            title="ตอนก่อนหน้า"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="M15.5 19 8.5 12l7-7 1.5 1.5L11.5 12l5.5 5.5L15.5 19Z" />
+            </svg>
+          </a>
+          <a
+            href={next ? `/read/${next.id}` : undefined}
+            aria-disabled={!next}
+            className={`inline-flex items-center rounded-lg border border-neutral-800 bg-neutral-900 p-2 text-neutral-100 leading-none transition ${
+              next ? "hover:bg-neutral-800" : "opacity-40 pointer-events-none"
+            }`}
+            title="ตอนถัดไป"
+          >
+            <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+              <path d="m8.5 19 7-7-7-7L7 6.5l5.5 5.5L7 17.5 8.5 19Z" />
+            </svg>
+          </a>
+        </div>
+      </div>
+
+      {/* behavior มือถือเดิม (ซ่อน/โผล่ตามสกรอลล์เฉพาะแถบบน) */}
       <ReaderBarBehavior />
     </main>
   );

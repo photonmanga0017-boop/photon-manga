@@ -36,10 +36,27 @@ export default function MangaCard({
     })
     .slice(0, 3);
 
+  const isCompleted = (status ?? "").toLowerCase() === "completed";
+
   return (
     <article className="flex h-full flex-col rounded-xl bg-neutral-900 p-2 shadow">
       <Link href={`/manga/${slug}`} className="block">
         <div className="relative aspect-[3/4] overflow-hidden rounded-lg bg-neutral-800">
+          {/* แถบคาด “จบแล้ว” (โชว์เฉพาะเมื่อ completed) */}
+          {isCompleted && (
+            <div
+              className="
+                pointer-events-none select-none
+                absolute left-[-18px] top-2 z-20 -rotate-45
+                bg-red-600 text-white shadow-md
+                px-6 py-1 text-[10px] font-extrabold tracking-wide
+                ring-1 ring-white/10
+              "
+            >
+              จบแล้ว
+            </div>
+          )}
+
           {!!cover_url && (
             <Image
               src={cover_url}
@@ -60,6 +77,8 @@ export default function MangaCard({
         >
           {title}
         </Link>
+
+        {/* ถ้าต้องการซ่อน status ข้อความด้านล่างเมื่อจบแล้ว ให้คอมเมนต์บรรทัดนี้ได้ */}
         {!!status && (
           <div className="mt-1 text-xs text-neutral-400">{status}</div>
         )}

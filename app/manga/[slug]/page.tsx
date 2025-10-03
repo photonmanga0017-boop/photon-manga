@@ -103,7 +103,7 @@ export default async function MangaPage({ params }: { params: { slug: string } }
         <div className="mt-6 flex justify-center">
           <Link
             href={`/read/${firstChapter.id}`}
-            className="rounded-lg bg-blue-600 hover:bg-blue-500 px-5 py-2.5 text-sm font-semibold text-white transition"
+            className="rounded-lg bg-emerald-700 hover:bg-emerald-500 px-5 py-2.5 text-sm font-semibold text-white transition"
           >
             เริ่มอ่านตอนแรก
           </Link>
@@ -122,7 +122,7 @@ export default async function MangaPage({ params }: { params: { slug: string } }
               href={`/read/${ch.id}`}
               className="flex items-center justify-between rounded-lg border border-neutral-800 bg-neutral-900 px-3 py-2 hover:bg-neutral-800 transition text-sm"
             >
-              <ReadHighlight chapterId={ch.id} readClassName="text-orange-400">
+              <ReadHighlight chapterId={ch.id} readClassName=" text-emerald-400">
                 ตอนที่ {n}
               </ReadHighlight>
               <span className="text-xs text-neutral-400 whitespace-nowrap ml-2">

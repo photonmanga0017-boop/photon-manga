@@ -46,12 +46,12 @@ export default function BookmarkButton({
       className={[
         "inline-flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition",
         on
-          ? "border border-yellow-400/60 text-yellow-300 bg-yellow-500/10 hover:bg-yellow-500/20"
+          ? "border border-emerald-400/60 text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20"
           : "border border-neutral-800 text-neutral-200 bg-neutral-900 hover:bg-neutral-800",
         className,
       ].join(" ")}
     >
-      <Bookmark className={`h-4 w-4 ${on ? "fill-yellow-300 text-yellow-300" : ""}`} />
+      <Bookmark className={`h-4 w-4 ${on ? "fill-emerald-400 text-emerald-400" : ""}`} />
       {on ? "Bookmark" : "Bookmark"}
     </button>
   );

@@ -1,230 +1,255 @@
+// app/recent/page.tsx
 "use client";
 
-import Image from "next/image";
-import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabaseClient";
 
-type RecentRead = {
-  mangaId: number;
-  chapterId: number;
-  chapterNumber?: number | null;   // ไม่เชื่อค่านี้ จะอิง DB
-  at: number;
-  publishedAt?: string | null;
-};
+/** ===== รูปแบบข้อมูลใน LocalStorage ที่รองรับ =====
+ *  A) KEY_V1: recent_v1  -> เก็บอ็อบเจ็กต์เต็ม
+ *  B) KEY_COMPACT: recent_reads -> เก็บแบบย่อ แล้วเติมข้อมูลจาก Supabase
+ */
 
-type ChapterFromDB = {
-  id: number;
-  number: number | null;
-  published_at: string | null;
-  manga_id: number;
-  manga: { id: number; title: string | null; cover_url: string | null; slug: string | null } | null;
-};
-
-type RenderRow = {
+// A) recent_v1 – full object
+type V1Item = {
   mangaId: number;
-  chapterId: number;
-  at: number;
-  number: number | null; // <- ใช้เลขจาก DB เสมอ
   mangaTitle: string;
-  mangaSlug: string | null;
-  cover: string | null;
+  mangaSlug: string;
+  coverUrl: string | null;
+  lastReadChapterId: number;
+  lastReadChapterNumber: number | null;
+  updatedAt: string | null;
 };
+
+// B) recent_reads – compact items
+type CompactItem = {
+  mangaId: number;
+  chapterId: number;
+  chapterNumber: number | null;
+  at: number;                 // ms
+  publishedAt: string | null; // may be null
+};
+
+type RenderItem = {
+  mangaId: number;
+  mangaTitle: string;
+  mangaSlug: string;
+  coverUrl: string | null;
+  lastReadChapterId: number;
+  lastReadChapterNumber: number | null;
+  updatedAt: string | null;
+};
+
+const KEY_V1 = "recent_v1";
+const KEY_COMPACT = "recent_reads";
+
+/** ===== Heading แบบ HISTORY (ตัวเขียวจางใหญ่ + ตัวขาวหน้า) ===== */
+function HeroHeading() {
+  return (
+    <div className="relative h-[30px] md:h-[50px] lg:h-[60px] mb-3 md:mb-4">
+      <div aria-hidden className="pointer-events-none select-none absolute inset-0">
+        <div
+          className="
+            absolute left-2 top-1/2 -translate-y-1/2
+            h-12 w-56 md:h-16 md:w-72 lg:h-20 lg:w-80
+            bg-[radial-gradient(ellipse_at_left,_rgba(16,185,129,0.18),_transparent_60%)]
+          "
+        />
+        <span
+          className="
+            absolute left-2 top-1/2 -translate-y-1/2
+            leading-none font-black tracking-tight
+            text-emerald-400/10 drop-shadow-[0_6px_20px_rgba(0,0,0,0.45)]
+            text-[8vw] md:text-[7vw] lg:text-[68px]
+          "
+        >
+          HISTORY
+        </span>
+      </div>
+
+      <h1
+        className="
+          absolute left-0 bottom-1 md:bottom-2 lg:bottom-3
+          text-xl md:text-3xl lg:text-4xl
+          font-extrabold tracking-wide text-white
+          drop-shadow-[0_2px_0_rgba(0,0,0,0.55)]
+        "
+      >
+        HISTORY
+      </h1>
+    </div>
+  );
+}
 
 export default function RecentPage() {
   const supabase = useMemo(() => createClient(), []);
-  const [rows, setRows] = useState<RenderRow[]>([]);
+  const [items, setItems] = useState<RenderItem[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
-    let seq = 0; // ป้องกัน race: ให้เฉพาะคำขอล่าสุดอัปเดต state
 
-    const load = async () => {
-      const my = ++seq;
+    (async () => {
       setLoading(true);
-
       try {
-        const raw = localStorage.getItem("recent_reads");
-        const arr: RecentRead[] = raw ? JSON.parse(raw) : [];
-
-        // “ล่าสุดต่อเรื่อง” (กันซ้ำด้วย mangaId)
-        const uniq = Array.from(
-          new Map(arr.sort((a, b) => b.at - a.at).map((x) => [x.mangaId, x]))
-        )
-          .map(([, v]) => v)
-          .slice(0, 50);
-
-        if (!uniq.length) {
-          if (!cancelled && my === seq) {
-            setRows([]);
-            setLoading(false);
+        // 1) อ่านฟอร์แมตใหม่ก่อน (recent_v1)
+        const rawV1 = localStorage.getItem(KEY_V1);
+        if (rawV1) {
+          try {
+            const arr = JSON.parse(rawV1) as unknown as V1Item[];
+            if (Array.isArray(arr) && arr.length) {
+              if (!cancelled) setItems(arr as RenderItem[]);
+              return;
+            }
+          } catch {
+            // ถ้า JSON พัง ข้ามไปอ่านแบบ compact
           }
+        }
+
+        // 2) แบบ compact (recent_reads) -> เติมข้อมูลจาก Supabase
+        const rawC = localStorage.getItem(KEY_COMPACT);
+        const compact: CompactItem[] = rawC ? JSON.parse(rawC) : [];
+        if (!Array.isArray(compact) || compact.length === 0) {
+          if (!cancelled) setItems([]);
           return;
         }
 
-        const chapterIds = uniq.map((u) => u.chapterId);
-        const { data, error } = await supabase
-          .from("chapters")
-          .select(
-            `
-            id, number, published_at, manga_id,
-            manga:manga ( id, title, cover_url, slug )
-          `
-          )
-          .in("id", chapterIds);
-
-        if (error) {
-          console.error("recent: chapters query error", error);
-          if (!cancelled && my === seq) {
-            setRows([]);
-            setLoading(false);
-          }
-          return;
+        // เอา "ล่าสุดต่อเรื่อง" เท่านั้น
+        const latestByManga = new Map<number, CompactItem>();
+        for (const r of compact) {
+          const cur = latestByManga.get(r.mangaId);
+          if (!cur || r.at > cur.at) latestByManga.set(r.mangaId, r);
         }
+        const latest = Array.from(latestByManga.values());
 
-        const byId = new Map<number, ChapterFromDB>(
-          (data ?? []).map((c) => [c.id as number, c as unknown as ChapterFromDB])
-        );
+        const mangaIds = latest.map((x) => x.mangaId);
+        const chapIds = latest.map((x) => x.chapterId);
 
-        const render: RenderRow[] = uniq
-          .map((u) => {
-            const ch = byId.get(u.chapterId);
-            if (!ch) return null;
+        const [{ data: mangas, error: mErr }, { data: chs, error: cErr }] = await Promise.all([
+          supabase.from("manga").select("id, title, slug, cover_url").in("id", mangaIds),
+          supabase.from("chapters").select("id, number").in("id", chapIds),
+        ]);
+
+        if (mErr) console.error("recent: manga fetch error:", mErr);
+        if (cErr) console.error("recent: chapters fetch error:", cErr);
+
+        const mangaById = new Map((mangas ?? []).map((m) => [m.id as number, m]));
+        const chapterById = new Map((chs ?? []).map((c) => [c.id as number, c]));
+
+        // ประกอบรายการที่จะแสดง
+        const hydrated: RenderItem[] = latest
+          .map((r) => {
+            const m = mangaById.get(r.mangaId);
+            if (!m) return null;
+            const ch = chapterById.get(r.chapterId);
+            const number =
+              typeof r.chapterNumber === "number" ? r.chapterNumber : ch?.number ?? null;
             return {
-              mangaId: u.mangaId,
-              chapterId: u.chapterId,
-              at: u.at,
-              number: ch.number ?? null,
-              mangaTitle: ch.manga?.title ?? `เรื่อง #${u.mangaId}`,
-              mangaSlug: ch.manga?.slug ?? null,
-              cover: ch.manga?.cover_url ?? null,
-            };
+              mangaId: r.mangaId,
+              mangaTitle: (m.title as string) ?? "ไม่ทราบชื่อเรื่อง",
+              mangaSlug: (m.slug as string) ?? "",
+              coverUrl: (m.cover_url as string) ?? null,
+              lastReadChapterId: r.chapterId,
+              lastReadChapterNumber: number,
+              updatedAt: r.publishedAt ?? null,
+            } as RenderItem;
           })
-          .filter(Boolean) as RenderRow[];
+          .filter(Boolean) as RenderItem[];
 
-        if (!cancelled && my === seq) setRows(render);
+        if (!cancelled) setItems(hydrated);
       } catch (e) {
-        console.error("recent parse error:", e);
-        if (!cancelled && my === seq) setRows([]);
+        console.error("recent page load error:", e);
+        if (!cancelled) setItems([]);
       } finally {
-        if (!cancelled && my === seq) setLoading(false);
+        if (!cancelled) setLoading(false);
       }
-    };
-
-    // โหลดครั้งแรก
-    load();
-
-    // ฟังทั้ง “storage” (ข้ามแท็บ) และ “recent-updated” (แท็บปัจจุบัน)
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === "recent_reads") load();
-    };
-    const onCustom = () => load();
-
-    // ถ้า tab กลับมา active → รีโหลดอีกครั้งกันค่าเพี้ยน
-    const onVisible = () => {
-      if (document.visibilityState === "visible") load();
-    };
-
-    window.addEventListener("storage", onStorage);
-    window.addEventListener("recent-updated", onCustom as EventListener);
-    document.addEventListener("visibilitychange", onVisible);
+    })();
 
     return () => {
       cancelled = true;
-      window.removeEventListener("storage", onStorage);
-      window.removeEventListener("recent-updated", onCustom as EventListener);
-      document.removeEventListener("visibilitychange", onVisible);
     };
   }, [supabase]);
 
   return (
-    <main className="mx-auto max-w-4xl p-3 md:p-6">
-      <h1 className="mb-4 text-lg font-bold md:text-2xl">อ่านล่าสุด</h1>
+    <main className="mx-auto max-w-3xl p-3 md:p-6">
+      <HeroHeading />
 
       {loading ? (
-        <p className="text-sm opacity-70">กำลังโหลด…</p>
-      ) : rows.length === 0 ? (
-        <p className="text-sm opacity-70">ยังไม่มีประวัติการอ่าน</p>
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6 text-sm opacity-80">
+          กำลังโหลด…
+        </div>
+      ) : items.length === 0 ? (
+        <div className="rounded-xl border border-neutral-800 bg-neutral-900 p-6 text-sm opacity-80">
+          ยังไม่มีประวัติการอ่าน
+        </div>
       ) : (
-        <ul className="space-y-3">
-          {rows.map((r) => {
-            const readHref = `/read/${r.chapterId}`;
-            const detailHref = r.mangaSlug ? `/manga/${r.mangaSlug}` : undefined;
-
-            return (
-              <li
-                key={`${r.mangaId}-${r.chapterId}`}
-                className="rounded-xl bg-neutral-900 hover:bg-neutral-800 transition"
+        <div className="space-y-3 md:space-y-4">
+          {items.map((it) => (
+            <div
+              key={`${it.mangaId}-${it.lastReadChapterId}`}
+              className="flex items-stretch rounded-lg bg-neutral-900 shadow overflow-hidden"
+            >
+              {/* ปก */}
+              <Link
+                href={it.mangaSlug ? `/manga/${it.mangaSlug}` : "#"}
+                className="relative h-16 w-12 shrink-0 overflow-hidden bg-neutral-800 md:h-20 md:w-16"
+                title={it.mangaTitle}
               >
-                <div className="flex items-center gap-3 p-3">
-                  {/* ปก → ไปหน้ารายละเอียดการ์ตูน */}
-                  <div className="relative w-14 md:w-16 aspect-[3/4] overflow-hidden rounded bg-neutral-800 flex-shrink-0">
-                    {r.cover ? (
-                      detailHref ? (
-                        <Link href={detailHref} className="absolute inset-0 block" title={r.mangaTitle}>
-                          <Image
-                            src={r.cover}
-                            alt={r.mangaTitle}
-                            fill
-                            sizes="(max-width:768px) 56px, 64px"
-                            className="object-cover"
-                          />
-                        </Link>
-                      ) : (
-                        <Image
-                          src={r.cover}
-                          alt={r.mangaTitle}
-                          fill
-                          sizes="(max-width:768px) 56px, 64px"
-                          className="object-cover"
-                        />
-                      )
-                    ) : (
-                      <div className="absolute inset-0 grid place-items-center text-[10px] text-neutral-500">
-                        ไม่มีรูป
-                      </div>
-                    )}
-                  </div>
+                {it.coverUrl ? (
+                  <Image
+                    src={it.coverUrl}
+                    alt={it.mangaTitle}
+                    fill
+                    sizes="64px"
+                    className="object-cover"
+                  />
+                ) : null}
+              </Link>
 
-                  {/* ข้อมูล (ชื่อเรื่อง → ไปหน้ารายละเอียดการ์ตูน) */}
-                  <div className="min-w-0 flex-1">
-                    {detailHref ? (
-                      <Link
-                        href={detailHref}
-                        className="truncate font-semibold text-sm md:text-base hover:underline"
-                        title={r.mangaTitle}
-                      >
-                        {r.mangaTitle}
-                      </Link>
-                    ) : (
-                      <div className="truncate font-semibold text-sm md:text-base">
-                        {r.mangaTitle}
-                      </div>
-                    )}
-
-                    <div className="text-xs text-neutral-400 mt-0.5">
-                      ตอนล่าสุดของเรื่องนี้ที่คุณอ่าน:{" "}
-                      {r.number != null ? `ตอน ${r.number}` : "ไม่ทราบเลขตอน"}
-                    </div>
-                    <div className="text-[11px] text-neutral-500">
-                      อ่านเมื่อ: {new Date(r.at).toLocaleString()}
-                    </div>
-                  </div>
-
-                  {/* ปุ่มไปอ่านต่อ → ไปหน้าอ่านตอนล่าสุดที่บันทึกไว้ */}
-                  <Link
-                    href={readHref}
-                    className="ml-auto text-xs font-semibold text-white bg-neutral-700 hover:bg-neutral-600 px-3 py-1 rounded"
-                    title="ไปอ่านต่อ"
-                  >
-                    ไปอ่านต่อ →
-                  </Link>
+              {/* ข้อมูล */}
+              <div className="min-w-0 flex-1 px-3 py-2">
+                <Link
+                  href={it.mangaSlug ? `/manga/${it.mangaSlug}` : "#"}
+                  className="block truncate text-[15px] font-semibold md:text-base"
+                  title={it.mangaTitle}
+                >
+                  {it.mangaTitle}
+                </Link>
+                <div className="mt-1 text-[13px] md:text-sm text-neutral-300">
+                  {it.lastReadChapterNumber != null
+                    ? `ตอนที่ ${it.lastReadChapterNumber}`
+                    : "ตอนที่ -"}
                 </div>
-              </li>
-            );
-          })}
-        </ul>
+              </div>
+
+              {/* ปุ่มลูกศร – กินพื้นที่ขวาทั้งหมด ชิดขอบ */}
+              <Link
+                href={`/read/${it.lastReadChapterId}`}
+                className="
+                  flex items-center justify-center self-stretch
+                  bg-emerald-600 text-white hover:bg-emerald-500 transition
+                  focus:outline-none focus:ring-2 focus:ring-emerald-400/40
+                  w-14 md:w-20
+                "
+                aria-label="ไปอ่านต่อ"
+              >
+                <svg
+                  className="h-5 w-5 md:h-6 md:w-6"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M5 12h14" />
+                  <path d="M13 6l6 6-6 6" />
+                </svg>
+              </Link>
+            </div>
+          ))}
+        </div>
       )}
     </main>
   );

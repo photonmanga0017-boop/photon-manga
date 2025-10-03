@@ -14,7 +14,7 @@ export default function ReadHighlight({
   chapterId,
   children,
   className = "",
-  readClassName = "text-orange-400", // สีส้ม
+  readClassName = " text-emerald-400", // สีเขียว
   unreadClassName = "",
 }: Props) {
   const [read, setRead] = useState(false);
