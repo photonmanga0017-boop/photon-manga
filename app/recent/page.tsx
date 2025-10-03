@@ -44,7 +44,7 @@ type RenderItem = {
 const KEY_V1 = "recent_v1";
 const KEY_COMPACT = "recent_reads";
 
-/** ===== Heading แบบ HISTORY (ตัวเขียวจางใหญ่ + ตัวขาวหน้า) ===== */
+/** ===== Heading ===== */
 function HeroHeading() {
   return (
     <div className="relative h-[30px] md:h-[50px] lg:h-[60px] mb-3 md:mb-4">
@@ -85,6 +85,7 @@ function HeroHeading() {
 export default function RecentPage() {
   const supabase = useMemo(() => createClient(), []);
   const [items, setItems] = useState<RenderItem[]>([]);
+  const [novelIds, setNovelIds] = useState<Set<number>>(new Set());
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -93,29 +94,47 @@ export default function RecentPage() {
     (async () => {
       setLoading(true);
       try {
-        // 1) อ่านฟอร์แมตใหม่ก่อน (recent_v1)
+        // 1) recent_v1
         const rawV1 = localStorage.getItem(KEY_V1);
         if (rawV1) {
           try {
             const arr = JSON.parse(rawV1) as unknown as V1Item[];
             if (Array.isArray(arr) && arr.length) {
               if (!cancelled) setItems(arr as RenderItem[]);
+              // ดึง type สำหรับ novel
+              const mangaIds = arr.map((x) => x.mangaId);
+              const { data: typesData } = await supabase
+                .from("manga")
+                .select("id, type")
+                .in("id", mangaIds);
+              if (!cancelled) {
+                const nset = new Set<number>();
+                for (const m of typesData ?? []) {
+                  if (
+                    typeof (m as any).type === "string" &&
+                    (m as any).type.toLowerCase().includes("novel")
+                  ) {
+                    nset.add((m as any).id as number);
+                  }
+                }
+                setNovelIds(nset);
+              }
               return;
             }
-          } catch {
-            // ถ้า JSON พัง ข้ามไปอ่านแบบ compact
-          }
+          } catch {}
         }
 
-        // 2) แบบ compact (recent_reads) -> เติมข้อมูลจาก Supabase
+        // 2) recent_reads
         const rawC = localStorage.getItem(KEY_COMPACT);
         const compact: CompactItem[] = rawC ? JSON.parse(rawC) : [];
         if (!Array.isArray(compact) || compact.length === 0) {
-          if (!cancelled) setItems([]);
+          if (!cancelled) {
+            setItems([]);
+            setNovelIds(new Set());
+          }
           return;
         }
 
-        // เอา "ล่าสุดต่อเรื่อง" เท่านั้น
         const latestByManga = new Map<number, CompactItem>();
         for (const r of compact) {
           const cur = latestByManga.get(r.mangaId);
@@ -126,30 +145,36 @@ export default function RecentPage() {
         const mangaIds = latest.map((x) => x.mangaId);
         const chapIds = latest.map((x) => x.chapterId);
 
-        const [{ data: mangas, error: mErr }, { data: chs, error: cErr }] = await Promise.all([
-          supabase.from("manga").select("id, title, slug, cover_url").in("id", mangaIds),
+        const [{ data: mangas }, { data: chs }] = await Promise.all([
+          supabase.from("manga").select("id, title, slug, cover_url, type").in("id", mangaIds),
           supabase.from("chapters").select("id, number").in("id", chapIds),
         ]);
-
-        if (mErr) console.error("recent: manga fetch error:", mErr);
-        if (cErr) console.error("recent: chapters fetch error:", cErr);
 
         const mangaById = new Map((mangas ?? []).map((m) => [m.id as number, m]));
         const chapterById = new Map((chs ?? []).map((c) => [c.id as number, c]));
 
-        // ประกอบรายการที่จะแสดง
+        const nset = new Set<number>();
+        for (const m of mangas ?? []) {
+          const t = (m as any).type;
+          if (typeof t === "string" && t.toLowerCase().includes("novel")) {
+            nset.add((m as any).id as number);
+          }
+        }
+
         const hydrated: RenderItem[] = latest
           .map((r) => {
             const m = mangaById.get(r.mangaId);
             if (!m) return null;
             const ch = chapterById.get(r.chapterId);
             const number =
-              typeof r.chapterNumber === "number" ? r.chapterNumber : ch?.number ?? null;
+              typeof r.chapterNumber === "number"
+                ? r.chapterNumber
+                : (ch?.number as number | undefined) ?? null;
             return {
               mangaId: r.mangaId,
-              mangaTitle: (m.title as string) ?? "ไม่ทราบชื่อเรื่อง",
-              mangaSlug: (m.slug as string) ?? "",
-              coverUrl: (m.cover_url as string) ?? null,
+              mangaTitle: ((m as any).title as string) ?? "ไม่ทราบชื่อเรื่อง",
+              mangaSlug: ((m as any).slug as string) ?? "",
+              coverUrl: ((m as any).cover_url as string) ?? null,
               lastReadChapterId: r.chapterId,
               lastReadChapterNumber: number,
               updatedAt: r.publishedAt ?? null,
@@ -157,10 +182,16 @@ export default function RecentPage() {
           })
           .filter(Boolean) as RenderItem[];
 
-        if (!cancelled) setItems(hydrated);
+        if (!cancelled) {
+          setItems(hydrated);
+          setNovelIds(nset);
+        }
       } catch (e) {
         console.error("recent page load error:", e);
-        if (!cancelled) setItems([]);
+        if (!cancelled) {
+          setItems([]);
+          setNovelIds(new Set());
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -185,70 +216,88 @@ export default function RecentPage() {
         </div>
       ) : (
         <div className="space-y-3 md:space-y-4">
-          {items.map((it) => (
-            <div
-              key={`${it.mangaId}-${it.lastReadChapterId}`}
-              className="flex items-stretch rounded-lg bg-neutral-900 shadow overflow-hidden"
-            >
-              {/* ปก */}
-              <Link
-                href={it.mangaSlug ? `/manga/${it.mangaSlug}` : "#"}
-                className="relative h-16 w-12 shrink-0 overflow-hidden bg-neutral-800 md:h-20 md:w-16"
-                title={it.mangaTitle}
+          {items.map((it) => {
+            const isNovel = novelIds.has(it.mangaId);
+            return (
+              <div
+                key={`${it.mangaId}-${it.lastReadChapterId}`}
+                className="flex items-stretch rounded-lg bg-neutral-900 shadow overflow-hidden"
               >
-                {it.coverUrl ? (
-                  <Image
-                    src={it.coverUrl}
-                    alt={it.mangaTitle}
-                    fill
-                    sizes="64px"
-                    className="object-cover"
-                  />
-                ) : null}
-              </Link>
-
-              {/* ข้อมูล */}
-              <div className="min-w-0 flex-1 px-3 py-2">
+                {/* ปก */}
                 <Link
                   href={it.mangaSlug ? `/manga/${it.mangaSlug}` : "#"}
-                  className="block truncate text-[15px] font-semibold md:text-base"
+                  className="relative h-16 w-12 shrink-0 overflow-hidden bg-neutral-800 md:h-20 md:w-16"
                   title={it.mangaTitle}
                 >
-                  {it.mangaTitle}
+                  {it.coverUrl ? (
+                    <Image
+                      src={it.coverUrl}
+                      alt={it.mangaTitle}
+                      fill
+                      sizes="64px"
+                      className="object-cover"
+                    />
+                  ) : null}
                 </Link>
-                <div className="mt-1 text-[13px] md:text-sm text-neutral-300">
-                  {it.lastReadChapterNumber != null
-                    ? `ตอนที่ ${it.lastReadChapterNumber}`
-                    : "ตอนที่ -"}
-                </div>
-              </div>
 
-              {/* ปุ่มลูกศร – กินพื้นที่ขวาทั้งหมด ชิดขอบ */}
-              <Link
-                href={`/read/${it.lastReadChapterId}`}
-                className="
-                  flex items-center justify-center self-stretch
-                  bg-emerald-600 text-white hover:bg-emerald-500 transition
-                  focus:outline-none focus:ring-2 focus:ring-emerald-400/40
-                  w-14 md:w-20
-                "
-                aria-label="ไปอ่านต่อ"
-              >
-                <svg
-                  className="h-5 w-5 md:h-6 md:w-6"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
+                {/* ข้อมูล */}
+                <div className="min-w-0 flex-1 px-3 py-2">
+                  <Link
+                    href={it.mangaSlug ? `/manga/${it.mangaSlug}` : "#"}
+                    className="block truncate text-[15px] font-semibold md:text-base"
+                    title={it.mangaTitle}
+                  >
+                    {it.mangaTitle}
+                  </Link>
+                  <div className="mt-1 text-[13px] md:text-sm text-neutral-300 flex items-center gap-2">
+                    {it.lastReadChapterNumber != null
+                      ? `ตอนที่ ${it.lastReadChapterNumber}`
+                      : "ตอนที่ -"}
+                    {isNovel && (
+                      <span
+                        className="
+                          inline-flex items-center
+                          rounded-full border border-black bg-emerald-600
+                          shadow-[0_2px_6px_rgba(0,0,0,0.6)]
+                          font-bold leading-none
+                          px-2 py-[1px] text-[10px]          /* มือถือ */
+                          sm:px-2.5 sm:py-[2px] sm:text-[11px] /* แท็บเล็ต */
+                          md:px-3 md:py-[3px] md:text-[12px]   /* เดสก์ท็อป */
+                        "
+                      >
+                        NOVEL
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* ปุ่มไปอ่านต่อ */}
+                <Link
+                  href={`/read/${it.lastReadChapterId}`}
+                  className="
+                    flex items-center justify-center self-stretch
+                    bg-emerald-600 text-white hover:bg-emerald-500 transition
+                    focus:outline-none focus:ring-2 focus:ring-emerald-400/40
+                    w-14 md:w-20
+                  "
+                  aria-label="ไปอ่านต่อ"
                 >
-                  <path d="M5 12h14" />
-                  <path d="M13 6l6 6-6 6" />
-                </svg>
-              </Link>
-            </div>
-          ))}
+                  <svg
+                    className="h-5 w-5 md:h-6 md:w-6"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="M13 6l6 6-6 6" />
+                  </svg>
+                </Link>
+              </div>
+            );
+          })}
         </div>
       )}
     </main>

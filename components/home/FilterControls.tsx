@@ -1,3 +1,4 @@
+// components/home/FilterControls.tsx
 "use client";
 
 import Link from "next/link";
@@ -23,20 +24,43 @@ export default function FilterControls({ active, className }: Props) {
     return `${pathname}?${q.toString()}`;
   };
 
-  const pillBase =
-    "inline-flex items-center rounded-full border px-3 py-1 text-xs md:text-sm transition";
-  const pillActive =
-    "border-emerald-400 text-emerald-300 bg-emerald-400/10 shadow-[0_0_0_1px_rgba(45,212,191,0.15)_inset]";
+  // ปุ่มแบบ responsive: ขนาด/ระยะปรับตามจอ
+  const pillBase = cn(
+    "inline-flex items-center justify-center select-none",
+    "rounded-full border transition font-medium",
+    // มือถือ
+    "px-2.5 py-1 text-[12px]",
+    // แท็บเล็ต
+    "sm:px-3 sm:py-1 sm:text-[13px]",
+    // เดสก์ท็อป
+    "md:px-3.5 md:py-1.5 md:text-sm"
+  );
+
+  const pillActive = cn(
+    "border-emerald-400/70 bg-emerald-500/15 text-emerald-300",
+    "shadow-[0_0_0_1px_rgba(45,212,191,0.15)_inset]",
+    // เดสก์ท็อปเด้งขึ้นนิด ๆ
+    "md:shadow md:shadow-black/10"
+  );
+
   const pillIdle =
     "border-white/15 text-white/80 hover:border-emerald-400/60 hover:text-white";
 
   return (
-    <div className={cn("flex gap-2", className)}>
+    <div
+      className={cn(
+        // ให้ wrap อัตโนมัติ + ระยะห่างเหมาะแต่ละจอ
+        "flex flex-wrap items-center",
+        "gap-1.5 sm:gap-2 lg:gap-3",
+        className
+      )}
+    >
       {(["all", "manga", "novel"] as const).map((k) => (
         <Link
           key={k}
           href={buildHref(k)}
           className={cn(pillBase, active === k ? pillActive : pillIdle)}
+          aria-current={active === k ? "page" : undefined}
         >
           {k === "all" ? "All" : k === "manga" ? "Manga" : "Novel"}
         </Link>

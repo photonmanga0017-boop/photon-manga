@@ -5,6 +5,8 @@ import ReaderBarBehavior from "../_ReaderBarBehavior";
 import ChapterSelect, { ChapterOption } from "../_ChapterSelect";
 import WriteRecentOnMount from "@/components/WriteRecentOnMount";
 import DesktopTopHider from "../_DesktopTopHider";
+import ScrollTopOnRouteChange from "@/components/ScrollTopOnRouteChange";
+import BumpDailyViews from "@/components/analytics/BumpDailyViews";
 
 type ChapterRow = {
   id: number;
@@ -56,17 +58,24 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
 
   const curIdx = chapters.findIndex((c) => c.id === data.id);
   const prev = curIdx > 0 ? chapters[curIdx - 1] : null;
-  const next = curIdx >= 0 && curIdx + 1 < chapters.length ? chapters[curIdx + 1] : null;
+  const next =
+    curIdx >= 0 && curIdx + 1 < chapters.length ? chapters[curIdx + 1] : null;
 
   return (
     <main className="mx-auto max-w-4xl px-2 md:px-6 pt-2 md:pt-3 lg:pt-2 pb-6">
-      {/* เขียน “อ่านล่าสุด” ทุกครั้งที่เปิดหน้าอ่าน ไม่ว่ามาจากไหน */}
+      {/* บังคับเลื่อนขึ้นบนสุดเมื่อเปลี่ยนตอน */}
+      <ScrollTopOnRouteChange onlyPathStartsWith="/read" />
+
+      {/* เขียนประวัติอ่านล่าสุดทุกครั้ง */}
       <WriteRecentOnMount
         mangaId={data.manga_id}
         chapterId={data.id}
         chapterNumber={typeof data.number === "number" ? data.number : null}
         publishedAt={data.published_at ?? null}
       />
+
+      {/* ✅ เพิ่มวิวรายวัน */}
+      <BumpDailyViews mangaId={data.manga_id} />
 
       {/* CSS: เดสก์ท็อปซ่อน/โชว์ + มือถือ behavior เดิม */}
       <style
@@ -88,7 +97,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
       {/* ควบคุมการซ่อน/โชว์บนเดสก์ท็อป */}
       <DesktopTopHider />
 
-      {/* แถบควบคุมด้านบน */}
+      {/* ================== แถบควบคุมด้านบน ================== */}
       <div
         id="reader-bar"
         className="
@@ -113,7 +122,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
           <span className="truncate">{data.manga?.title ?? "Series"}</span>
         </a>
 
-        {/* ดรอปดาวเลือกตอน (โหมดปกติ) */}
+        {/* ดรอปดาวเลือกตอน */}
         <ChapterSelect
           options={chapters as unknown as ChapterOption[]}
           currentId={data.id}
@@ -149,7 +158,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* หัวเรื่อง */}
+      {/* ================== หัวเรื่อง ================== */}
       <div className="mb-4 md:mb-6">
         <h1 className="text-lg font-bold md:2xl">
           {data.manga?.title ?? "ไม่ทราบชื่อเรื่อง"} — ตอน {data.number ?? "-"}
@@ -165,7 +174,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         )}
       </div>
 
-      {/* เนื้อหาภาพ */}
+      {/* ================== เนื้อหาภาพ ================== */}
       {pages.length ? (
         <div className="flex flex-col gap-2 md:gap-3">
           {pages.map((p) => (
@@ -186,7 +195,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         </div>
       )}
 
-      {/* แถบควบคุม "ด้านล่าง" หลังอ่านจบ */}
+      {/* ================== แถบควบคุมด้านล่าง ================== */}
       <div
         id="reader-bottom"
         className="
@@ -195,7 +204,6 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
           rounded-xl border border-neutral-800 bg-neutral-900/70 py-1.5 px-2
         "
       >
-        {/* ไปหน้ารายละเอียดเรื่อง */}
         <a
           href={data.manga?.slug ? `/manga/${data.manga.slug}` : "/"}
           className="
@@ -211,7 +219,6 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
           <span className="truncate">{data.manga?.title ?? "Series"}</span>
         </a>
 
-        {/* ดรอปดาวเลือกตอน (ทำให้เป็น drop-up โดยไม่เปลี่ยน UI อื่น) */}
         <ChapterSelect
           options={chapters as unknown as ChapterOption[]}
           currentId={data.id}
@@ -219,7 +226,6 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
           dropUp
         />
 
-        {/* ปุ่มก่อนหน้า / ถัดไป */}
         <div className="shrink-0 flex items-center gap-1">
           <a
             href={prev ? `/read/${prev.id}` : undefined}
@@ -248,7 +254,7 @@ export default async function ReadPage({ params }: { params: { id: string } }) {
         </div>
       </div>
 
-      {/* behavior มือถือเดิม (ซ่อน/โผล่ตามสกรอลล์เฉพาะแถบบน) */}
+      {/* behavior มือถือเดิม */}
       <ReaderBarBehavior />
     </main>
   );
